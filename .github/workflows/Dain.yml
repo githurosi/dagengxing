@@ -1,10 +1,10 @@
 name: 混淆 worker.zip 中的 JS 文件
 on:
   push:
-    branches: [main] # 当 main 分支有推送时触发
+    branches: [main] 
   schedule:
-    - cron: "0 1 * * *" # UTC+8 凌晨 1 点定时触发
-  workflow_dispatch: # 手动触发
+    - cron: "0 16 * * *" # UTC+8 凌晨 1 点
+  workflow_dispatch: 
     inputs:
       force_update:
         description: '是否强制更新（忽略版本检查）'
@@ -12,7 +12,7 @@ on:
         default: 'false'
 
 permissions:
-  contents: write # 需写入权限以提交混淆结果
+  contents: write 
 
 jobs:
   obfuscate:
@@ -22,13 +22,13 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1 # 浅克隆加速
+          fetch-depth: 1 
 
-      - name: 安装混淆工具
+      - name: 安装工具
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y unzip # 解压工具
-          npm install -g terser # JS 混淆工具
+          sudo apt-get install -y unzip 
+          npm install -g javascript-obfuscator # 安装 javascript - obfuscator
 
       - name: 下载最新版本资产（含授权）
         id: download-latest
@@ -39,10 +39,8 @@ jobs:
           REPO_OWNER="bia-pain-bache"
           REPO_NAME="BPB-Worker-Panel"
           
-          # 带授权头访问 GitHub API
           response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           
-          # 检查响应是否为空
           if [[ -z "$response" ]]; then
             echo "❌ 无法获取版本信息，可能是授权失败或仓库不存在"
             exit 1
@@ -51,42 +49,45 @@ jobs:
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
           ASSETS=($(echo "$response" | jq -r '.assets[].name'))
           
-          # 检查是否存在 worker.zip（小写匹配）
           if ! echo "${ASSETS[@]}" | grep -q "worker\.zip"; then
             echo "❌ 最新版本中未找到 worker.zip"
             exit 1
           fi
 
-          # 下载 worker.zip 到未混淆目录（小写文件名）
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           mkdir -p unobfuscated
           curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           echo "✅ 已下载 worker.zip: $TAG_NAME"
 
-      - name: 混淆 worker.zip 中的 JS 文件
+      - name: 解压 worker.zip
         run: |
           set -euo pipefail
           WORKER_ZIP="unobfuscated/worker.zip"
           TEMP_DIR=$(mktemp -d)
-          
-          # 解压文件
           unzip -q "$WORKER_ZIP" -d "$TEMP_DIR"
           echo "已解压到临时目录: $TEMP_DIR"
 
-          # 查找并混淆所有 JS 文件
+      - name: 混淆 JS 文件
+        run: |
+          set -euo pipefail
+          OBFUSCATED_DIR="obfuscated"
+          mkdir -p $OBFUSCATED_DIR
           find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
-            OBFUSCATED_FILE="obfuscated/${FILENAME%.*}_obfuscated.js"
-            
-            # 执行混淆（添加详细错误信息）
-            terser "$js_file" --compress --mangle -o "$OBFUSCATED_FILE" || {
-              echo "❌ 混淆失败: $FILENAME"
-              exit 1
-            }
-            echo "✅ 混淆完成: $FILENAME -> ${OBFUSCATED_FILE##*/}"
+            OUTPUT_FILE="$OBFUSCATED_DIR/$FILENAME"
+            # 应用混淆参数
+            javascript - obfuscator "$js_file" "$OUTPUT_FILE" \
+              --dead-code-injection \
+              --dead-code-injection-threshold 0.4 \
+              --control-flow-flattening \
+              --control-flow-flattening-threshold 0.75 \
+              --identifier-names-generator hexadecimal \
+              --compact \
+              --variable-name-changer select
+            # 域名锁定重定向 about:blank（需自定义域名，示例）
+            # sed -i "s|window\.location\.href|if (window\.location\.host !== 'your - domain.com') { window\.location\.href = 'about:blank'; } else { window\.location\.href|g" "$OUTPUT_FILE"
+            # 请将 'your - domain.com' 替换为实际域名，若无需此功能则删除该行
           done
-
-          # 清理临时目录
           rm -rf "$TEMP_DIR"
 
       - name: 提交混淆结果到仓库
@@ -98,4 +99,4 @@ jobs:
             unobfuscated/worker.zip
             obfuscated/
           commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          args: --allow-empty-directory # 允许空目录提交
+          args: --allow-empty-directory
