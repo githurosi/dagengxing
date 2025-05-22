@@ -60,7 +60,7 @@ jobs:
           echo "✅ 已下载 worker.zip: $TAG_NAME"
 
       - name: 解压 worker.zip
-        id: extract - worker
+        id: extract-worker
         run: |
           set -euo pipefail
           WORKER_ZIP="unobfuscated/worker.zip"
@@ -74,7 +74,7 @@ jobs:
           set -euo pipefail
           OBFUSCATED_DIR="obfuscated"
           mkdir -p $OBFUSCATED_DIR
-          TEMP_DIR=${{ steps.extract - worker.outputs.TEMP_DIR }}
+          TEMP_DIR=${{ steps.extract-worker.outputs.TEMP_DIR }}
           find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="$OBFUSCATED_DIR/$FILENAME"
