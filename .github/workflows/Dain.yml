@@ -1,4 +1,4 @@
-name: 工作流自带混淆（保留未混淆代码）
+name: 工作流自带混淆（确保混淆文件入指定目录）
 on:
   push:
     branches: [main] 
@@ -24,39 +24,36 @@ jobs:
         run: |
           REPO_OWNER="bia-pain-bache" 
           REPO_NAME="BPB-Worker-Panel" 
-          # 增加响应检查
-          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          echo "Response: $response"
-          if [[ -z "$response" ]]; then
-            echo "❌ 无法获取响应，检查仓库名或权限"
-            exit 1
-          fi
+          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
-          if [[ -z "$DOWNLOAD_URL" ]]; then
-            echo "❌ 未找到 worker.zip 资产"
-            exit 1
-          fi
           mkdir -p unobfuscated
-          curl -sL "$DOWNLOAD_URL" -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o unobfuscated/worker.zip
-          if [[ ! -f unobfuscated/worker.zip ]]; then
-            echo "❌ 下载的文件不存在"
-            exit 1
-          fi
+          curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           unzip -q unobfuscated/worker.zip -d unobfuscated/
-          if [[ $? -ne 0 ]]; then
-            echo "❌ 解压失败"
-            exit 1
-          fi
-          echo "✅ 下载并解压完成"
+          echo "✅ 下载并解压完成，文件在 unobfuscated 目录"
 
-      - name: 混淆 JS 文件到根目录“混淆”文件夹
+      - name: 混淆 JS 文件到根目录“混淆”文件夹（强化路径检查）
         run: |
-          mkdir -p 混淆
+          # 检查并创建混淆目录
+          OBFUSCATED_DIR="混淆"
+          if [! -d "$OBFUSCATED_DIR" ]; then
+            mkdir -p "$OBFUSCATED_DIR"
+            echo "✅ 创建根目录下的 $OBFUSCATED_DIR 文件夹"
+          else
+            echo "✅ $OBFUSCATED_DIR 文件夹已存在"
+          fi
+          
           find unobfuscated -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
-            OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
+            OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
+            
+            # 执行混淆并检查文件是否生成
             javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal
-            echo "✅ 混淆: $FILENAME -> ${FILENAME%.*}_obfuscated.js"
+            if [! -f "$OUTPUT_FILE" ]; then
+              echo "❌ 混淆文件 $OUTPUT_FILE 未生成，检查混淆工具输出"
+              exit 1
+            else
+              echo "✅ 成功混淆: $FILENAME -> $OUTPUT_FILE"
+            fi
           done
 
       - name: 提交结果
