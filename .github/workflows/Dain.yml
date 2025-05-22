@@ -1,4 +1,4 @@
-name: 混淆 worker.zip 中的 JS 文件
+name: 混淆 worker.zip 中的 JS 文件 (日志增强版)
 on:
   push:
     branches: [main] 
@@ -23,41 +23,40 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1 
+        run: |
+          echo "当前仓库路径: $(pwd)"
+          echo "检出分支: $(git branch --show-current)"
 
       - name: 安装工具
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip 
           npm install -g javascript-obfuscator@latest
-          
+          # 打印工具版本（关键调试信息）
+          javascript-obfuscator --version
+          echo "工具安装完成"
+
       - name: 下载最新版本资产（含授权）
         id: download-latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          REPO_OWNER="bia-pain-bache" # 请确认实际仓库所有者名称是否正确
-          REPO_NAME="BPB-Worker-Panel" # 请确认实际仓库名称是否正确
+          REPO_OWNER="bia-pain-bache" 
+          REPO_NAME="BPB-Worker-Panel" 
           
           response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          # 打印完整响应内容（排查授权/仓库名错误）
+          echo "GitHub API 响应: $response"
           
-          if [[ -z "$response" ]]; then
-            echo "❌ 无法获取版本信息，可能是授权失败或仓库不存在"
-            exit 1
-          fi
-
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
-          ASSETS=($(echo "$response" | jq -r '.assets[].name'))
-          
-          if ! echo "${ASSETS[@]}" | grep -q "worker\.zip"; then
-            echo "❌ 最新版本中未找到 worker.zip"
-            exit 1
-          fi
-
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
+          
           mkdir -p unobfuscated
           curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
-          echo "✅ 已下载 worker.zip: $TAG_NAME"
+          # 打印文件大小（确认下载完整性）
+          ls -lh unobfuscated/worker.zip
+          echo "✅ 已下载版本: $TAG_NAME"
 
       - name: 解压 worker.zip
         id: extract-worker
@@ -66,8 +65,10 @@ jobs:
           WORKER_ZIP="unobfuscated/worker.zip"
           TEMP_DIR=$(mktemp -d)
           unzip -q "$WORKER_ZIP" -d "$TEMP_DIR"
-          echo "已解压到临时目录: $TEMP_DIR"
+          # 列出解压后的文件结构（关键调试步骤）
+          ls -lR "$TEMP_DIR"
           echo "TEMP_DIR=$TEMP_DIR" >> "$GITHUB_OUTPUT"
+          echo "解压完成，文件列表已打印"
 
       - name: 混淆 JS 文件
         run: |
@@ -75,6 +76,11 @@ jobs:
           OBFUSCATED_DIR="obfuscated"
           mkdir -p $OBFUSCATED_DIR
           TEMP_DIR=${{ steps.extract-worker.outputs.TEMP_DIR }}
+          
+          # 打印待处理文件列表
+          echo "待混淆文件："
+          find "$TEMP_DIR" -type f -name "*.js" -print
+          
           find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             if [[ $FILENAME == "_worker_obfuscated.js" ]]; then
@@ -83,12 +89,21 @@ jobs:
               OUTPUT_FILENAME=$FILENAME
             fi
             OUTPUT_FILE="$OBFUSCATED_DIR/$OUTPUT_FILENAME"
-            javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal 
+            
+            # 打印正在处理的文件对（源文件→目标文件）
+            echo "处理: $js_file → $OUTPUT_FILE"
+            
+            # 执行混淆命令并捕获错误（关键调试）
+            if ! javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal; then
+              echo "❌ 混淆失败: $js_file"
+              exit 1
+            fi
           done
+          echo "✅ 混淆完成，共处理 $(find "$OBFUSCATED_DIR" -type f -name "*.js" | wc -l) 个文件"
 
       - name: 提交混淆结果到仓库
         if: always()
-        uses: stefanzweifel/git-auto-commit-action@v5 # 修正此处，去除多余空格
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔄 混淆 worker.zip 中的 JS 文件 (版本: ${{ steps.download-latest.outputs.TAG_NAME }})"
           files: |
@@ -96,3 +111,7 @@ jobs:
             obfuscated/
           commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           args: --allow-empty-directory
+        run: |
+          # 提交前检查文件是否存在（避免空提交）
+          echo "待提交文件："
+          ls -lR unobfuscated/ obfuscated/
