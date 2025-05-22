@@ -28,12 +28,12 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y wget jq unzip
-          npm install -g terser # 提前安装Terser，确保混淆步骤依赖完整
+          npm install -g terser
 
       - name: 创建资产目录
-        run: |
-          mkdir -p 未混淆          # 原始资产目录
-          mkdir -p 已混淆          # 混淆后资产目录
+        run:
+          - mkdir -p 未混淆
+          - mkdir -p 已混淆
 
       - name: 下载最新资产到未混淆目录
         id: download-assets
@@ -47,7 +47,7 @@ jobs:
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
           ASSETS=($(echo "$response" | jq -r '.assets[].name'))
 
-          for asset in "${ASSETS[@]}"; do
+          for asset in "${ASSETS[@]}":
             DOWNLOAD_URL=$(echo "$response" | jq -r ".assets[] | select(.name == \"$asset\") | .browser_download_url")
             wget -q --show-progress "$DOWNLOAD_URL" -O "未混淆/$asset"
             echo "已下载原始资产: 未混淆/$asset"
@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
-          LOCAL_VERSION=$(cat version.txt 2>/dev/null || echo "")
+          LOCAL_VERSION=$(cat version.txt 2>/dev/null || "")
           TAG_NAME=${{ steps.download-assets.outputs.TAG_NAME }}
           RELEASE_NOTES=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest | jq -r '.body')
 
@@ -79,26 +79,25 @@ jobs:
 
       - name: 混淆指定JS文件（示例：worker.js）
         if: steps.download-assets.outputs.ASSETS =~ 'worker\.js$'
-        run: |
-          # 确保工作目录切换到包含未混淆文件的目录
-          cd 未混淆
-          if [ -f "worker.js" ]; then
-            echo "正在混淆 worker.js..."
-            terser worker.js --compress --mangle -o ../已混淆/worker.js
-            echo "✅ 混淆完成，已保存到已混淆/worker.js"
-          else
-            echo "未找到未混淆的worker.js文件，跳过混淆步骤"
-          fi
-          cd .. # 切换回上级目录
+        run:
+          - cd 未混淆
+          - if [ -f "worker.js" ]; then
+              echo "正在混淆 worker.js..."
+              terser worker.js --compress --mangle -o ../已混淆/worker.js
+              echo "✅ 混淆完成，已保存到已混淆/worker.js"
+            else
+              echo "未找到未混淆的worker.js文件，跳过混淆步骤"
+            fi
+          - cd ..
 
       - name: 提交所有文件
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔄 同步资产、更新日志并混淆JS文件"
-          files: |
-            未混淆/
-            已混淆/
-            version.txt
-            README.md
+          files:
+            - 未混淆/
+            - 已混淆/
+            - version.txt
+            - README.md
           commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
