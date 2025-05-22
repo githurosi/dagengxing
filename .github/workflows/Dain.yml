@@ -50,8 +50,9 @@ jobs:
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
             
+            # 简化混淆参数，先确保基础功能运行
             javascript-obfuscator "$js_file" "$OUTPUT_FILE" \
-              --compact --variable-name-changer hexadecimal --control-flow-flattening 
+              --compact --variable-name-changer hexadecimal 
             echo "✅ 混淆: $FILENAME -> ${FILENAME%.*}_obfuscated.js"
           done
 
