@@ -1,4 +1,4 @@
-name: worker 资产混淆工作流（基于 subworker 原理）
+name: BPB-Worker-Panel 资产混淆工作流
 on:
   push:
     branches: [main]
@@ -6,58 +6,63 @@ on:
 permissions:
   contents: write
 jobs:
-  obfuscate-worker:
+  asset-obfuscate:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出仓库
+      - name: 检出当前仓库
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: 安装混淆工具
+      - name: 安装工具
         run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip
           npm install -g javascript-obfuscator@latest
 
-      - name: 下载并解压 worker 资产
+      - name: 从 BPB-Worker-Panel 仓库下载 worker.zip
         run: |
-          REPO_OWNER="Chilly-Blaze"  # subworker 仓库所有者
-          REPO_NAME="subworker"       # 仓库名称
+          REPO_OWNER="bia-pain-bache"          # 仓库所有者
+          REPO_NAME="BPB-Worker-Panel"         # 仓库名称
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)       # 时间戳避免覆盖
+
+          # 获取最新版本资产链接
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
-          mkdir -p src unobfuscated
-          curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
-          unzip -q unobfuscated/worker.zip -d unobfuscated/
-          echo "✅ 解压完成，文件在 unobfuscated 目录"
-
-      - name: 定向混淆核心 JS 文件（保留关键变量）
-        run: |
-          OBFUSCATED_DIR="混淆"
-          mkdir -p "$OBFUSCATED_DIR"
           
-          # 核心混淆参数（根据 subworker 原理保留特定变量）
-          # --keep-fnames "assemblySubRequest" 保留请求格式变量
-          # --control-flow-flattening 启用控制流平坦化
-          # --dead-code-injection 注入死代码
-          find unobfuscated/src -type f -name "*.js" | while read -r js_file; do
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "❌ 未找到 worker.zip 资产，检查仓库是否有发布"
+            exit 1
+          fi
+
+          # 下载并解压到版本化目录
+          mkdir -p "unobfuscated/versions/${TIMESTAMP}"
+          curl -sL "$DOWNLOAD_URL" -o "unobfuscated/versions/${TIMESTAMP}/worker.zip"
+          unzip -q "unobfuscated/versions/${TIMESTAMP}/worker.zip" -d "unobfuscated/versions/${TIMESTAMP}/"
+          echo "✅ 下载解压完成：unobfuscated/versions/${TIMESTAMP}"
+
+      - name: 混淆最新版本资产（处理 JS 文件）
+        run: |
+          LAST_VERSION=$(ls -d unobfuscated/versions/* | sort -r | head -n 1)
+          OBFUSCATED_DIR="混淆"                # 根目录混淆文件夹
+          mkdir -p "$OBFUSCATED_DIR"
+
+          find "$LAST_VERSION" -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
             
+            # 基础混淆参数（可根据需要增强）
             javascript-obfuscator "$js_file" "$OUTPUT_FILE" \
-              --compact \
-              --variable-name-changer hexadecimal \
-              --control-flow-flattening \
-              --dead-code-injection \
-              --dead-code-injection-threshold 0.4 \
-              --keep-fnames "assemblySubRequest"  # 保留 subworker 核心变量
-              
-            echo "✅ 混淆: $FILENAME -> ${OUTPUT_FILE}"
+              --compact --variable-name-changer hexadecimal --dead-code-injection
+            echo "✅ 混淆完成：$FILENAME -> ${OUTPUT_FILE}"
           done
 
-      - name: 提交混淆结果
+      - name: 提交结果（保留原始资产+混淆文件）
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔄 混淆 worker 核心代码（基于 subworker 方案）"
+          commit_message: "📦 同步 BPB-Worker-Panel 资产 & 🔄 混淆代码"
           files: |
+            unobfuscated/
             混淆/
-          args: --allow-empty-directory
+          args: --allow-empty-directory --no-verify
