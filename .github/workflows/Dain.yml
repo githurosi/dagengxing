@@ -1,10 +1,9 @@
-name: BPB Panel 资产混淆与自动更新
+name: BPB Panel 资产混淆与分文件夹管理
 on:
   push:
     branches:
       - main
   schedule:
-    # 每天凌晨1点自动运行
     - cron: "0 1 * * *"
 permissions:
   contents: write
@@ -26,58 +25,44 @@ jobs:
         run: |
           npm install -g javascript-obfuscator
 
-      - name: 下载BPB-Worker-Panel最新资产（保留历史版本）
+      - name: 下载并解压最新资产到未混淆文件夹
         run: |
           REPO_OWNER="bia-pain-bache"
           REPO_NAME="BPB-Worker-Panel"
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
           
-          # 获取release资产链接（兼容zip/tar.gz）
+          # 清理旧未混淆文件（可选，如需保留历史可注释）
+          rm -rf unobfuscated/*
+          
+          # 获取最新资产链接
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name | contains("worker.zip")) | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           
           if [[ -z "$DOWNLOAD_URL" ]]; then
-            echo "❌ 未找到 worker.zip 资产，尝试下载tar.gz"
-            DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name | contains("worker.tar.gz")) | .browser_download_url')
-            if [[ -z "$DOWNLOAD_URL" ]]; then
-              echo "❌ 资产缺失，终止流程"
-              exit 1
-            fi
-          fi
-          
-          mkdir -p "unobfuscated/versions/${TIMESTAMP}"
-          curl -sL "$DOWNLOAD_URL" -o "unobfuscated/versions/${TIMESTAMP}/worker.archive"
-          
-          # 自动识别压缩格式解压
-          if [[ "$DOWNLOAD_URL" == *".zip" ]]; then
-            unzip -q "unobfuscated/versions/${TIMESTAMP}/worker.archive" -d "unobfuscated/versions/${TIMESTAMP}/"
-          else
-            tar -xzf "unobfuscated/versions/${TIMESTAMP}/worker.archive" -C "unobfuscated/versions/${TIMESTAMP}/"
-          fi
-          echo "✅ 资产已保存到 unobfuscated/versions/${TIMESTAMP}"
-
-      - name: 定位最新未混淆JS文件（兼容多文件场景）
-        id: locate-js-files
-        run: |
-          LAST_VERSION=$(ls -d unobfuscated/versions/* | sort -r | head -n 1)
-          JS_FILES=$(find "$LAST_VERSION" -type f -name "*.js" | grep -v "_obfuscated.js")
-          if [[ -z "$JS_FILES" ]]; then
-            echo "❌ 未找到未混淆的JS文件，检查资产结构"
+            echo "❌ 未找到 worker.zip 资产"
             exit 1
           fi
-          echo "::set-output name=js_files::$(echo "$JS_FILES" | tr '\n' ',')"
-
-      - name: 应用高强度混淆（用户提供的参数版本）
-        run: |
-          JS_FILES=($(echo "${{ steps.locate-js-files.outputs.js_files }}" | tr ',' '\n'))
-          OBFUSCATED_DIR="混淆"
-          mkdir -p "$OBFUSCATED_DIR"
           
-          for file in "${JS_FILES[@]}"; do
-            FILENAME=$(basename "$file")
-            OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
+          mkdir -p unobfuscated
+          curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
+          unzip -q unobfuscated/worker.zip -d unobfuscated/
+          echo "✅ 最新资产已解压到 unobfuscated 文件夹"
+
+      - name: 检查未混淆文件夹内容
+        run: |
+          if [[ ! "$(ls -A unobfuscated)" ]]; then
+            echo "❌ 未混淆文件夹为空，检查资产内容"
+            exit 1
+          fi
+          echo "✅ 未混淆文件检查通过"
+
+      - name: 应用高强度混淆并输出到混淆文件夹
+        run: |
+          mkdir -p 混淆
+          find unobfuscated -type f -name "*.js" | while read -r js_file; do
+            FILENAME=$(basename "$js_file")
+            OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
             
-            javascript-obfuscator "$file" --output "$OUTPUT_FILE" \
+            javascript-obfuscator "$js_file" --output "$OUTPUT_FILE" \
               --compact true \
               --control-flow-flattening true \
               --control-flow-flattening-threshold 1 \
@@ -91,15 +76,14 @@ jobs:
               --transform-object-keys true \
               --unicode-escape-sequence true
             
-            echo "✅ 完成高强度混淆：$FILENAME -> ${OUTPUT_FILE}"
+            echo "✅ 完成混淆：$FILENAME -> ${OUTPUT_FILE}"
           done
 
-      - name: 提交混淆结果与资产记录
+      - name: 提交分文件夹结果
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           branch: main
-          commit_message: '📦 同步资产 & 🔒 高强度混淆代码'
-          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
+          commit_message: '📁 分文件夹管理资产 & 🔒 高强度混淆'
           files: |
             unobfuscated/
             混淆/
