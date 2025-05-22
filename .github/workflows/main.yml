@@ -27,7 +27,8 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y wget jq unzip # 保留原始依赖
+          sudo apt-get install -y wget jq unzip
+          npm install -g terser # 提前安装Terser，确保混淆步骤依赖完整
 
       - name: 创建资产目录
         run: |
@@ -77,20 +78,18 @@ jobs:
           echo -e "## 📦 资产更新日志\n### $TAG_NAME\n资产文件: ${ASSETS[*]}\n\n$TRANSLATED_NOTES" >> README.md
 
       - name: 混淆指定JS文件（示例：worker.js）
-        if: steps.download-assets.outputs.ASSETS =~ 'worker\.js$' # 修正正则表达式引用格式
+        if: steps.download-assets.outputs.ASSETS =~ 'worker\.js$'
         run: |
-          # 假设原始资产包含worker.js，从未混淆目录读取
-          if [ -f "未混淆/worker.js" ]; then
-            # 调用在线混淆工具（需工具支持API，此处为示例）
-            # 实际需替换为toolonline.net的真实API请求逻辑
+          # 确保工作目录切换到包含未混淆文件的目录
+          cd 未混淆
+          if [ -f "worker.js" ]; then
             echo "正在混淆 worker.js..."
-            # 示例：使用本地Terser混淆（需安装npm依赖）
-            npm install -g terser
-            terser 未混淆/worker.js --compress --mangle -o 已混淆/worker.js
+            terser worker.js --compress --mangle -o ../已混淆/worker.js
             echo "✅ 混淆完成，已保存到已混淆/worker.js"
           else
             echo "未找到未混淆的worker.js文件，跳过混淆步骤"
           fi
+          cd .. # 切换回上级目录
 
       - name: 提交所有文件
         if: always()
