@@ -1,4 +1,4 @@
-name: 工作流混淆 JS 文件（使用 uglify - js）
+name: 资产下载解压与混淆工作流
 on:
   push:
     branches: [main]
@@ -6,46 +6,60 @@ on:
 permissions:
   contents: write
 jobs:
-  obfuscate:
+  asset - process:
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: 安装混淆工具（uglify - js）
+      - name: 安装依赖工具
         run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip
           npm install -g uglify-js
-      - name: 下载并解压 worker.zip（使用令牌权限）
+      - name: 下载并解压 worker.zip（强化验证）
         run: |
-          REPO_OWNER="bia-pain-bache" 
-          REPO_NAME="BPB-Worker-Panel" 
-          # 使用令牌获取下载链接
-          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          if [[ -z "$response" ]]; then
-            echo "❌ 无法获取仓库响应，检查仓库名或 GITHUB_TOKEN 权限"
+          REPO_OWNER="bia-pain-bache"  # 请确认实际仓库所有者名称
+          REPO_NAME="BPB-Worker-Panel" # 请确认实际仓库名称
+          GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          
+          # 检查仓库所有者和名称是否设置
+          if [[ -z "$REPO_OWNER" || -z "$REPO_NAME" ]]; then
+            echo "❌ 仓库所有者或名称未设置，检查工作流配置"
             exit 1
           fi
+          
+          # 获取最新版本信息
+          response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest)
+          if [[ $? -ne 0 ]]; then
+            echo "❌ curl 请求仓库信息失败，检查网络或令牌权限"
+            exit 1
+          fi
+          
+          # 解析下载链接
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           if [[ -z "$DOWNLOAD_URL" ]]; then
-            echo "❌ 未找到 worker.zip 资产"
+            echo "❌ 未找到 worker.zip 资产，检查仓库是否有该资产"
             exit 1
           fi
-          # 使用令牌下载文件
+          
+          # 下载文件
           mkdir -p unobfuscated
-          curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
+          curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           if [[ ! -f unobfuscated/worker.zip ]]; then
-            echo "❌ 下载的 worker.zip 文件不存在，检查网络或链接"
+            echo "❌ 下载的 worker.zip 文件不存在，检查网络连接"
             exit 1
           fi
+          
           # 解压文件
           unzip -q unobfuscated/worker.zip -d unobfuscated/
           if [[ $? -ne 0 ]]; then
-            echo "❌ 解压 worker.zip 失败，检查压缩包完整性"
+            echo "❌ 解压失败，检查压缩包是否损坏"
             exit 1
           fi
           echo "✅ 下载并解压 worker.zip 成功"
-      - name: 混淆 JS 文件到根目录“混淆”文件夹（用 uglify - js）
+      - name: 混淆 JS 文件到根目录“混淆”文件夹
         run: |
           mkdir -p 混淆
           find unobfuscated -type f -name "*.js" | while read -r js_file; do
@@ -53,7 +67,7 @@ jobs:
             OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
             uglifyjs "$js_file" -o "$OUTPUT_FILE" -c -m
             if [! -f "$OUTPUT_FILE" ]; then
-              echo "❌ 混淆文件 $OUTPUT_FILE 未生成，检查工具输出"
+              echo "❌ 混淆文件 $OUTPUT_FILE 未生成，检查 uglify - js 工具"
               exit 1
             else
               echo "✅ 成功混淆: $FILENAME -> $OUTPUT_FILE"
@@ -63,7 +77,7 @@ jobs:
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔄 工作流混淆 JS 文件"
+          commit_message: "📦 资产下载解压 & 🔄 混淆 JS 文件"
           files: |
             unobfuscated/
             混淆/
