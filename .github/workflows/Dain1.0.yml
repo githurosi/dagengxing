@@ -29,13 +29,19 @@ jobs:
         run: |
           REPO_OWNER="bia-pain-bache"
           REPO_NAME="BPB-Worker-Panel"
-          rm -rf unobfuscated/*  # 清理旧文件（如需保留可注释）
+          
+          # 清理旧未混淆文件（可选，如需保留历史可注释）
+          rm -rf unobfuscated/*
+          
+          # 获取最新资产链接
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
+          
           if [[ -z "$DOWNLOAD_URL" ]]; then
             echo "❌ 未找到 worker.zip 资产"
             exit 1
           fi
+          
           mkdir -p unobfuscated
           curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           unzip -q unobfuscated/worker.zip -d unobfuscated/
@@ -49,39 +55,36 @@ jobs:
           fi
           echo "✅ 未混淆文件检查通过"
 
-      - name: 混淆并重命名为 worker.js
+      - name: 应用高强度混淆并输出到混淆文件夹
         run: |
           mkdir -p 混淆
-          # 假设未混淆文件中包含名为 unobfuscated-worker.js 的主文件
-          SOURCE_FILE=$(find unobfuscated -type f -name "*unobfuscated-worker.js" | head -n 1)
-          if [[ -z "$SOURCE_FILE" ]]; then
-            echo "❌ 未找到主文件 unobfuscated-worker.js"
-            exit 1
-          fi
-          OUTPUT_FILE="混淆/worker.js"  # 直接指定目标名称
-          
-          javascript-obfuscator "$SOURCE_FILE" --output "$OUTPUT_FILE" \
-            --compact true \
-            --control-flow-flattening true \
-            --control-flow-flattening-threshold 1 \
-            --dead-code-injection true \
-            --dead-code-injection-threshold 1 \
-            --identifier-names-generator hexadecimal \
-            --rename-globals true \
-            --string-array true \
-            --string-array-encoding 'rc4' \
-            --string-array-threshold 1 \
-            --transform-object-keys true \
-            --unicode-escape-sequence true
+          find unobfuscated -type f -name "*.js" | while read -r js_file; do
+            FILENAME=$(basename "$js_file")
+            OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
             
-          echo "✅ 混淆并重命名完成：$SOURCE_FILE -> $OUTPUT_FILE"
+            javascript-obfuscator "$js_file" --output "$OUTPUT_FILE" \
+              --compact true \
+              --control-flow-flattening true \
+              --control-flow-flattening-threshold 1 \
+              --dead-code-injection true \
+              --dead-code-injection-threshold 1 \
+              --identifier-names-generator hexadecimal \
+              --rename-globals true \
+              --string-array true \
+              --string-array-encoding 'rc4' \
+              --string-array-threshold 1 \
+              --transform-object-keys true \
+              --unicode-escape-sequence true
+            
+            echo "✅ 完成混淆：$FILENAME -> ${OUTPUT_FILE}"
+          done
 
-      - name: 提交结果
+      - name: 提交分文件夹结果
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           branch: main
-          commit_message: '🔄 混淆并重命名为 worker.js'
+          commit_message: '📁 分文件夹管理资产 & 🔒 高强度混淆'
           files: |
             unobfuscated/
-            混淆/worker.js
+            混淆/
           push_options: '--set-upstream'
