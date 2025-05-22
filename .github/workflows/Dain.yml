@@ -1,57 +1,106 @@
-name: BPB-Worker-Panel 资产混淆工作流
+name: BPB Panel 资产混淆与自动更新
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches:
+      - main
+  schedule:
+    # 每天凌晨1点自动运行
+    - cron: "0 1 * * *"
 permissions:
   contents: write
 jobs:
-  asset-obfuscate:
+  build-obfuscate:
     runs-on: ubuntu-latest
     steps:
       - name: 检出当前仓库
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: 安装工具
+
+      - name: 设置Node.js环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: "latest"
+
+      - name: 安装混淆工具
         run: |
-          sudo apt-get update - y
-          sudo apt-get install - y unzip
-          npm install - g javascript - obfuscator@latest
-      - name: 从 BPB-Worker-Panel 仓库下载 worker.zip
+          npm install -g javascript-obfuscator
+
+      - name: 下载BPB-Worker-Panel最新资产（保留历史版本）
         run: |
           REPO_OWNER="bia-pain-bache"
           REPO_NAME="BPB-Worker-Panel"
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          
+          # 获取release资产链接（兼容zip/tar.gz）
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
+          DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name | contains("worker.zip")) | .browser_download_url')
+          
           if [[ -z "$DOWNLOAD_URL" ]]; then
-            echo "❌ 未找到 worker.zip 资产，检查仓库是否有发布"
-            exit 1
+            echo "❌ 未找到 worker.zip 资产，尝试下载tar.gz"
+            DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name | contains("worker.tar.gz")) | .browser_download_url')
+            if [[ -z "$DOWNLOAD_URL" ]]; then
+              echo "❌ 资产缺失，终止流程"
+              exit 1
+            fi
           fi
+          
           mkdir -p "unobfuscated/versions/${TIMESTAMP}"
-          curl -sL "$DOWNLOAD_URL" -o "unobfuscated/versions/${TIMESTAMP}/worker.zip"
-          unzip -q "unobfuscated/versions/${TIMESTAMP}/worker.zip" -d "unobfuscated/versions/${TIMESTAMP}/"
-          echo "✅ 下载解压完成：unobfuscated/versions/${TIMESTAMP}"
-      - name: 混淆最新版本资产（处理 JS 文件）
+          curl -sL "$DOWNLOAD_URL" -o "unobfuscated/versions/${TIMESTAMP}/worker.archive"
+          
+          # 自动识别压缩格式解压
+          if [[ "$DOWNLOAD_URL" == *".zip" ]]; then
+            unzip -q "unobfuscated/versions/${TIMESTAMP}/worker.archive" -d "unobfuscated/versions/${TIMESTAMP}/"
+          else
+            tar -xzf "unobfuscated/versions/${TIMESTAMP}/worker.archive" -C "unobfuscated/versions/${TIMESTAMP}/"
+          fi
+          echo "✅ 资产已保存到 unobfuscated/versions/${TIMESTAMP}"
+
+      - name: 定位最新未混淆JS文件（兼容多文件场景）
+        id: locate-js-files
         run: |
           LAST_VERSION=$(ls -d unobfuscated/versions/* | sort -r | head -n 1)
+          JS_FILES=$(find "$LAST_VERSION" -type f -name "*.js" | grep -v "_obfuscated.js")
+          if [[ -z "$JS_FILES" ]]; then
+            echo "❌ 未找到未混淆的JS文件，检查资产结构"
+            exit 1
+          fi
+          echo "::set-output name=js_files::$(echo "$JS_FILES" | tr '\n' ',')"
+
+      - name: 应用高强度混淆（用户提供的参数版本）
+        run: |
+          JS_FILES=($(echo "${{ steps.locate-js-files.outputs.js_files }}" | tr ',' '\n'))
           OBFUSCATED_DIR="混淆"
           mkdir -p "$OBFUSCATED_DIR"
-          find "$LAST_VERSION" -type f -name "*.js" | while read -r js_file; do
-            FILENAME=$(basename "$js_file")
+          
+          for file in "${JS_FILES[@]}"; do
+            FILENAME=$(basename "$file")
             OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
-            # 明确指定 --dead-code-injection 的值为 true
-            javascript-obfuscator "$js_file" "$OUTPUT_FILE" \
-              --compact --variable-name-changer hexadecimal --dead-code-injection true
-            echo "✅ 混淆完成：$FILENAME -> ${OUTPUT_FILE}"
+            
+            javascript-obfuscator "$file" --output "$OUTPUT_FILE" \
+              --compact true \
+              --control-flow-flattening true \
+              --control-flow-flattening-threshold 1 \
+              --dead-code-injection true \
+              --dead-code-injection-threshold 1 \
+              --identifier-names-generator hexadecimal \
+              --rename-globals true \
+              --string-array true \
+              --string-array-encoding 'rc4' \
+              --string-array-threshold 1 \
+              --transform-object-keys true \
+              --unicode-escape-sequence true
+            
+            echo "✅ 完成高强度混淆：$FILENAME -> ${OUTPUT_FILE}"
           done
-      - name: 提交结果（保留原始资产 + 混淆文件）
-        if: always()
+
+      - name: 提交混淆结果与资产记录
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "📦 同步 BPB-Worker-Panel 资产 & 🔄 混淆代码"
+          branch: main
+          commit_message: '📦 同步资产 & 🔒 高强度混淆代码'
+          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
           files: |
             unobfuscated/
             混淆/
-          args: --allow-empty-directory --no-verify
+          push_options: '--set-upstream'
