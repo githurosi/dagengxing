@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip 
-          npm install -g javascript-obfuscator # 安装 javascript - obfuscator
+          npm install -g javascript - obfuscator 
 
       - name: 下载最新版本资产（含授权）
         id: download-latest
@@ -36,8 +36,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          REPO_OWNER="bia-pain-bache"
-          REPO_NAME="BPB-Worker-Panel"
+          REPO_OWNER="bia - pain - bache"
+          REPO_NAME="BPB - Worker - Panel"
           
           response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           
@@ -60,43 +60,41 @@ jobs:
           echo "✅ 已下载 worker.zip: $TAG_NAME"
 
       - name: 解压 worker.zip
+        id: extract - worker
         run: |
           set -euo pipefail
           WORKER_ZIP="unobfuscated/worker.zip"
           TEMP_DIR=$(mktemp -d)
           unzip -q "$WORKER_ZIP" -d "$TEMP_DIR"
           echo "已解压到临时目录: $TEMP_DIR"
+          echo "TEMP_DIR=$TEMP_DIR" >> "$GITHUB_OUTPUT"
 
       - name: 混淆 JS 文件
         run: |
           set -euo pipefail
           OBFUSCATED_DIR="obfuscated"
           mkdir -p $OBFUSCATED_DIR
+          TEMP_DIR=${{ steps.extract - worker.outputs.TEMP_DIR }}
           find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="$OBFUSCATED_DIR/$FILENAME"
-            # 应用混淆参数
             javascript - obfuscator "$js_file" "$OUTPUT_FILE" \
-              --dead-code-injection \
-              --dead-code-injection-threshold 0.4 \
-              --control-flow-flattening \
-              --control-flow-flattening-threshold 0.75 \
-              --identifier-names-generator hexadecimal \
+              --dead - code - injection \
+              --dead - code - injection - threshold 0.4 \
+              --control - flow - flattening \
+              --control - flow - flattening - threshold 0.75 \
+              --identifier - names - generator hexadecimal \
               --compact \
-              --variable-name-changer select
-            # 域名锁定重定向 about:blank（需自定义域名，示例）
-            # sed -i "s|window\.location\.href|if (window\.location\.host !== 'your - domain.com') { window\.location\.href = 'about:blank'; } else { window\.location\.href|g" "$OUTPUT_FILE"
-            # 请将 'your - domain.com' 替换为实际域名，若无需此功能则删除该行
+              --variable - name - changer select
           done
-          rm -rf "$TEMP_DIR"
 
       - name: 提交混淆结果到仓库
         if: always()
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git - auto - commit - action@v5
         with:
-          commit_message: "🔄 混淆 worker.zip 中的 JS 文件 (版本: ${{ steps.download-latest.outputs.TAG_NAME }})"
+          commit_message: "🔄 混淆 worker.zip 中的 JS 文件 (版本: ${{ steps.download - latest.outputs.TAG_NAME }})"
           files: |
             unobfuscated/worker.zip
             obfuscated/
-          commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          args: --allow-empty-directory
+          commit_author: github - actions[bot] <github - actions[bot]@users.noreply.github.com>
+          args: --allow - empty - directory
