@@ -39,7 +39,7 @@ jobs:
           REPO_OWNER="bia-pain-bache" # 请确认实际仓库所有者名称是否正确
           REPO_NAME="BPB-Worker-Panel" # 请确认实际仓库名称是否正确
           
-          response=$(curl -s - H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           
           if [[ -z "$response" ]]; then
             echo "❌ 无法获取版本信息，可能是授权失败或仓库不存在"
@@ -56,7 +56,7 @@ jobs:
 
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           mkdir -p unobfuscated
-          curl -sL - H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" - o unobfuscated/worker.zip
+          curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           echo "✅ 已下载 worker.zip: $TAG_NAME"
 
       - name: 解压 worker.zip
@@ -83,16 +83,16 @@ jobs:
               OUTPUT_FILENAME=$FILENAME
             fi
             OUTPUT_FILE="$OBFUSCATED_DIR/$OUTPUT_FILENAME"
-            javascript - obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable - name - changer hexadecimal 
+            javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal 
           done
 
       - name: 提交混淆结果到仓库
         if: always()
-        uses: stefanzweifel/git - auto - commit - action@v5
+        uses: stefanzweifel/git-auto-commit-action@v5 # 修正此处，去除多余空格
         with:
-          commit_message: "🔄 混淆 worker.zip 中的 JS 文件 (版本: ${{ steps.download - latest.outputs.TAG_NAME }})"
+          commit_message: "🔄 混淆 worker.zip 中的 JS 文件 (版本: ${{ steps.download-latest.outputs.TAG_NAME }})"
           files: |
             unobfuscated/worker.zip
             obfuscated/
-          commit_author: github - actions[bot] <github - actions[bot]@users.noreply.github.com>
-          args: --allow - empty - directory
+          commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+          args: --allow-empty-directory
