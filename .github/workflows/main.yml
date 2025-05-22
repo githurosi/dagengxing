@@ -1,4 +1,4 @@
-name: 同步资产、更新日志与JS混淆
+name: 同步资产与更新日志（含混淆）
 on:
   push:
     branches: [ main ]
@@ -12,94 +12,105 @@ on:
         default: 'false'
 
 permissions:
-  contents: read # 最小权限，仅需读取仓库内容（如需提交需改为 write）
+  contents: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # 延长超时时间
+    timeout-minutes: 20
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1 # 浅克隆加速
+          fetch-depth: 1
 
-      - name: 安装依赖
+      - name: 安装依赖（含 JS 混淆工具）
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y wget jq unzip # translate-shell 如需翻译请取消注释
-          npm install -g terser
-          # sudo apt-get install -y translate-shell # 如需翻译日志请启用
+          sudo apt-get install -y wget jq translate-shell unzip
+          npm install -g terser zip
 
-      - name: 创建资产目录（英文路径）
+      - name: 创建资产目录
         run: |
-          mkdir -p unobfuscated
-          mkdir -p obfuscated
+          mkdir -p 未混淆
+          mkdir -p 已混淆
 
       - name: 下载最新资产到未混淆目录
         id: download-assets
         env:
-          REPO_OWNER: ${{ github.repository_owner }} # 自动获取仓库所有者
-          REPO_NAME: ${{ github.repository_name }}     # 自动获取仓库名
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: bia-pain-bache
+          REPO_NAME: BPB-Worker-Panel
         run: |
           set -euo pipefail
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
           ASSETS=($(echo "$response" | jq -r '.assets[].name'))
-          HAS_WORKER_JS=0 # 标记是否包含 worker.js
 
-          for asset in "${ASSETS[@]}"; do # 修正循环语法（删除冒号）
+          for asset in "${ASSETS[@]}"; do
             DOWNLOAD_URL=$(echo "$response" | jq -r ".assets[] | select(.name == \"$asset\") | .browser_download_url")
-            wget -q --show-progress "$DOWNLOAD_URL" -O "unobfuscated/$asset"
-            echo "已下载原始资产: unobfuscated/$asset"
-            [[ "$asset" =~ worker\.js$ ]] && HAS_WORKER_JS=1 # 检测是否包含 worker.js
+            wget -q --show-progress "$DOWNLOAD_URL" -O "未混淆/$asset"
+            echo "已下载: 未混淆/$asset"
           done
 
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "ASSETS=$(printf "%s " "${ASSETS[@]}")" >> $GITHUB_OUTPUT # 安全拼接数组
-          echo "HAS_WORKER_JS=$HAS_WORKER_JS" >> $GITHUB_OUTPUT # 输出标记
+          echo "ASSETS=$(printf '%s ' "${ASSETS[@]}")" >> $GITHUB_OUTPUT # 安全拼接数组
 
       - name: 同步更新日志
         id: update-log
         run: |
           set -euo pipefail
           FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
-          LOCAL_VERSION=$(cat version.txt 2>/dev/null || "0.0.0") # 初始版本默认值
-          TAG_NAME=${{ steps.download-assets.outputs.TAG_NAME }}
-          RELEASE_NOTES=$(curl -s https://api.github.com/repos/${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}/releases/latest | jq -r '.body')
-          ASSETS=${{ steps.download-assets.outputs.ASSETS }}
+          LOCAL_VERSION=$(cat version.txt 2>/dev/null || "")
+          REPO_OWNER=bia-pain-bache
+          REPO_NAME=BPB-Worker-Panel
+
+          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
+          RELEASE_NOTES=$(echo "$response" | jq -r '.body')
 
           if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
-            echo "✅ 已是最新版本（$TAG_NAME），无需更新日志"
+            echo "✅ 已是最新版本（$TAG_NAME）"
             exit 0
           fi
 
+          TRANSLATED_NOTES=$(echo "$RELEASE_NOTES" | trans -b -e google -t zh-CN || "$RELEASE_NOTES")
           echo "$TAG_NAME" > version.txt
-          echo -e "## 📦 资产更新日志\n### $TAG_NAME\n资产文件: $ASSETS\n\n$RELEASE_NOTES" >> README.md # 暂不翻译
+          echo -e "## 📦 资产更新日志\n### $TAG_NAME\n资产文件: ${ASSETS[*]}\n\n$TRANSLATED_NOTES" >> README.md
 
-      - name: 混淆指定JS文件（示例：worker.js）
-        if: steps.download-assets.outputs.HAS_WORKER_JS == 1 # 使用标记判断
+      - name: 混淆 Worker.zip 中的 JS 文件
+        if: steps.download-assets.outputs.ASSETS =~ 'Worker\.zip$'
         run: |
-          cd unobfuscated
-          if [ -f "worker.js" ]; then
-            echo "正在混淆 worker.js..."
-            terser worker.js --compress --mangle -o ../obfuscated/worker.js
-            echo "✅ 混淆完成，已保存到 obfuscated/worker.js"
-          else
-            echo "未找到未混淆的 worker.js 文件，跳过混淆步骤"
-          fi
-          cd ..
+          set -euo pipefail
+          WORKER_ZIP="未混淆/Worker.zip"
+          TEMP_DIR=$(mktemp -d)
 
-      - name: 提交所有文件（含空目录处理）
+          # 解压 Worker.zip 到临时目录
+          unzip -q "$WORKER_ZIP" -d "$TEMP_DIR"
+          echo "已解压 Worker.zip 到临时目录"
+
+          # 查找所有 JS 文件并混淆
+          find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
+            FILENAME=$(basename "$js_file")
+            OBFUSCATED_FILE="已混淆/${FILENAME%.*}_obfuscated.js"
+            terser "$js_file" --compress --mangle -o "$OBFUSCATED_FILE"
+            echo "✅ 混淆完成: $FILENAME -> ${OBFUSCATED_FILE##*/}"
+          done
+
+          # 清理临时目录
+          rm -rf "$TEMP_DIR"
+
+      - name: 提交所有文件
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🔄 同步资产、更新日志并混淆JS文件"
+          commit_message: |
+            🔄 同步 ${TAG_NAME} 资产
+            未混淆资产: ${{ steps.download-assets.outputs.ASSETS }}
+            已混淆文件: $(ls -1 已混淆/ | tr '\n' ' ')
           files: |
-            unobfuscated/
-            obfuscated/
+            未混淆/
+            已混淆/
             version.txt
             README.md
           commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          args: --allow-empty # 允许空提交（避免目录为空时出错）
