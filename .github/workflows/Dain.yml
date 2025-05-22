@@ -24,11 +24,29 @@ jobs:
         run: |
           REPO_OWNER="bia-pain-bache" 
           REPO_NAME="BPB-Worker-Panel" 
-          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          # 增加响应检查
+          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
+          echo "Response: $response"
+          if [[ -z "$response" ]]; then
+            echo "❌ 无法获取响应，检查仓库名或权限"
+            exit 1
+          fi
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
+          if [[ -z "$DOWNLOAD_URL" ]]; then
+            echo "❌ 未找到 worker.zip 资产"
+            exit 1
+          fi
           mkdir -p unobfuscated
-          curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
+          curl -sL "$DOWNLOAD_URL" -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o unobfuscated/worker.zip
+          if [[ ! -f unobfuscated/worker.zip ]]; then
+            echo "❌ 下载的文件不存在"
+            exit 1
+          fi
           unzip -q unobfuscated/worker.zip -d unobfuscated/
+          if [[ $? -ne 0 ]]; then
+            echo "❌ 解压失败"
+            exit 1
+          fi
           echo "✅ 下载并解压完成"
 
       - name: 混淆 JS 文件到根目录“混淆”文件夹
@@ -37,7 +55,6 @@ jobs:
           find unobfuscated -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
-            # 基础混淆参数，可根据需要添加更多参数（如 --control-flow-flattening）
             javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal
             echo "✅ 混淆: $FILENAME -> ${FILENAME%.*}_obfuscated.js"
           done
