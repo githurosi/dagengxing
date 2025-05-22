@@ -1,10 +1,6 @@
-name: 同步资产与更新日志（含混淆）
+name: 混淆 Worker.zip 中的 JS 文件
 on:
-  push:
-    branches: [ main ]
-  schedule:
-    - cron: "0 1 * * *" # UTC+8凌晨1点
-  workflow_dispatch:
+  workflow_dispatch: # 手动触发（也可配置为 push/schedule）
     inputs:
       force_update:
         description: '是否强制更新（忽略版本检查）'
@@ -12,113 +8,31 @@ on:
         default: 'false'
 
 permissions:
-  contents: write 
+  contents: write # 需写入权限以提交混淆结果
 
 jobs:
-  sync:
+  obfuscate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1 
+          fetch-depth: 1 # 浅克隆加速
 
-      - name: 安装依赖（仅保留必要工具）
+      - name: 安装混淆工具
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y wget jq unzip 
-          npm install -g terser zip 
+          sudo apt-get install -y unzip # 解压工具
+          npm install -g terser # JS 混淆工具
 
-      - name: 创建资产目录（英文路径）
-        run: |
-          mkdir -p unobfuscated 
-          mkdir -p obfuscated    
-
-      - name: 下载最新资产到未混淆目录
-        id: download-assets
+      - name: 下载最新版本资产
+        id: download-latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO_OWNER: bia-pain-bache # 固定目标仓库所有者
-          REPO_NAME: BPB-Worker-Panel # 固定目标仓库名
         run: |
           set -euo pipefail
-          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
-          ASSETS=($(echo "$response" | jq -r '.assets[].name'))
-          HAS_WORKER_ZIP=0 
-
-          for asset in "${ASSETS[@]}"; do
-            DOWNLOAD_URL=$(echo "$response" | jq -r ".assets[] | select(.name == \"$asset\") | .browser_download_url")
-            wget -q --show-progress "$DOWNLOAD_URL" -O "unobfuscated/$asset"
-            echo "已下载: unobfuscated/$asset"
-            [[ "$asset" == "Worker.zip" ]] && HAS_WORKER_ZIP=1 
-          done
-
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "ASSETS=$(printf '%s ' "${ASSETS[@]}")" >> $GITHUB_OUTPUT 
-          echo "HAS_WORKER_ZIP=$HAS_WORKER_ZIP" >> $GITHUB_OUTPUT 
-
-      - name: 同步更新日志
-        id: update-log
-        run: |
-          set -euo pipefail
-          FORCE_UPDATE=${{ github.event.inputs.force_update || 'false' }}
-          LOCAL_VERSION=$(cat version.txt 2>/dev/null || "0.0.0") 
-          REPO_OWNER=bia-pain-bache
-          REPO_NAME=BPB-Worker-Panel
-
-          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
-          RELEASE_NOTES=$(echo "$response" | jq -r '.body')
-
-          if [ "$LOCAL_VERSION" = "$TAG_NAME" ] && [ "$FORCE_UPDATE" != "true" ]; then
-            echo "✅ 已是最新版本（$TAG_NAME）"
-            exit 0
-          fi
-
-          TRANSLATED_NOTES="$RELEASE_NOTES" 
-          echo "$TAG_NAME" > version.txt
-          echo -e "## 📦 资产更新日志\n### $TAG_NAME\n资产文件: ${ASSETS[*]}\n\n$TRANSLATED_NOTES" >> README.md
-
-      - name: 混淆 Worker.zip 中的 JS 文件
-        if: steps.download-assets.outputs.HAS_WORKER_ZIP == 1 
-        run: |
-          set -euo pipefail
-          WORKER_ZIP="unobfuscated/Worker.zip"
-          TEMP_DIR=$(mktemp -d) 
-
-          unzip -q "$WORKER_ZIP" -d "$TEMP_DIR" || {
-            echo "❌ 解压 Worker.zip 失败"
-            exit 1
-          }
-          echo "已解压 Worker.zip 到临时目录: $TEMP_DIR"
-
-          find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
-            FILENAME=$(basename "$js_file")
-            OBFUSCATED_FILE="obfuscated/${FILENAME%.*}_obfuscated.js"
-
-            terser "$js_file" --compress --mangle -o "$OBFUSCATED_FILE" || {
-              echo "❌ 混淆 $FILENAME 失败"
-              exit 1
-            }
-            echo "✅ 混淆完成: $FILENAME -> ${OBFUSCATED_FILE##*/}"
-          done
-
-          rm -rf "$TEMP_DIR"
-
-      - name: 提交所有文件（带变更检测）
-        if: always()
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: |
-            🔄 同步 ${TAG_NAME} 资产
-            未混淆资产: ${{ steps.download-assets.outputs.ASSETS }}
-            已混淆文件: $(test -d obfuscated && ls -1 obfuscated/ || echo "无")
-          files: |
-            unobfuscated/
-            obfuscated/
-            version.txt
-            README.md
-          commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          args: --no-verify
+          REPO_OWNER="bia-pain-bache"
+          REPO_NAME="BPB-Worker-Panel"
+          # 获取最新版本信息
+          response=$(curl -s https://api.github.com
