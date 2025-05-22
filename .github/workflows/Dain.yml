@@ -1,4 +1,4 @@
-name: 资产同步与混淆（混淆代码单独存根目录）
+name: 工作流自带混淆（保留未混淆代码）
 on:
   push:
     branches: [main] 
@@ -8,58 +8,46 @@ permissions:
   contents: write 
 
 jobs:
-  process-assets:
+  obfuscate:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出仓库（保留现有文件）
+      - name: 检出仓库
         uses: actions/checkout@v4
         with:
           fetch-depth: 1 
 
-      - name: 安装工具
+      - name: 安装混淆工具
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y unzip 
           npm install -g javascript-obfuscator@latest
 
-      - name: 下载最新资产（追加时间戳避免覆盖，保留历史版本）
-        id: download-latest
+      - name: 下载并解压 worker.zip
         run: |
-          set -euo pipefail
           REPO_OWNER="bia-pain-bache" 
           REPO_NAME="BPB-Worker-Panel" 
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
-          
-          mkdir -p "unobfuscated/versions/${TIMESTAMP}"
-          curl -sL "$DOWNLOAD_URL" -o "unobfuscated/versions/${TIMESTAMP}/worker.zip"
-          unzip -q "unobfuscated/versions/${TIMESTAMP}/worker.zip" -d "unobfuscated/versions/${TIMESTAMP}/"
-          echo "✅ 资产已保存到 unobfuscated/versions/${TIMESTAMP}"
+          mkdir -p unobfuscated
+          curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
+          unzip -q unobfuscated/worker.zip -d unobfuscated/
+          echo "✅ 下载并解压完成"
 
-      - name: 混淆最新版本资产（结果存根目录“混淆”文件夹）
+      - name: 混淆 JS 文件到根目录“混淆”文件夹
         run: |
-          set -euo pipefail
-          LAST_VERSION=$(ls -d unobfuscated/versions/* | sort -r | head -n 1)
-          OBFUSCATED_DIR="混淆" # 根目录下的混淆文件夹
-          mkdir -p "$OBFUSCATED_DIR"
-          
-          find "$LAST_VERSION" -type f -name "*.js" | while read -r js_file; do
+          mkdir -p 混淆
+          find unobfuscated -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
-            OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
-            
-            javascript-obfuscator "$js_file" "$OUTPUT_FILE" \
-              --compact --variable-name-changer hexadecimal 
+            OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
+            # 基础混淆参数，可根据需要添加更多参数（如 --control-flow-flattening）
+            javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal
             echo "✅ 混淆: $FILENAME -> ${FILENAME%.*}_obfuscated.js"
           done
 
-      - name: 提交所有文件（保留未混淆代码，提交混淆结果）
+      - name: 提交结果
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "📦 同步资产 & 🔄 混淆代码"
+          commit_message: "🔄 工作流混淆 JS 文件"
           files: |
             unobfuscated/
             混淆/
-          args: --no-verify --allow-empty-directory
+          args: --allow-empty-directory
