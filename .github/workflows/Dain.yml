@@ -1,24 +1,17 @@
-name: 资产同步到指定文件夹（含 JS 文件）
+name: 资产同步与混淆（保留未混淆代码）
 on:
   push:
     branches: [main] 
-  schedule:
-    - cron: "0 16 * * *" # UTC 时间，如需调整为北京时间需根据时差换算
   workflow_dispatch: 
-    inputs:
-      force_update:
-        description: '是否强制更新（忽略版本检查）'
-        required: false
-        default: 'false'
 
 permissions:
   contents: write 
 
 jobs:
-  sync-assets:
+  process-assets:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出仓库
+      - name: 检出仓库（保留现有文件）
         uses: actions/checkout@v4
         with:
           fetch-depth: 1 
@@ -27,41 +20,47 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip 
+          npm install -g javascript-obfuscator@latest
 
-      - name: 下载最新版本资产到 unobfuscated 文件夹
+      - name: 下载最新资产（追加时间戳避免覆盖，保留历史版本）
         id: download-latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          REPO_OWNER="bia-pain-bache" # 请确认实际仓库所有者名称
-          REPO_NAME="BPB-Worker-Panel" # 请确认实际仓库名称
+          REPO_OWNER="bia-pain-bache" 
+          REPO_NAME="BPB-Worker-Panel" 
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
           
-          response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
-          
-          if [[ -z "$response" ]]; then
-            echo "❌ 无法获取版本信息，可能是授权失败或仓库不存在"
-            exit 1
-          fi
-
-          TAG_NAME=$(echo "$response" | jq -r '.tag_name')
+          response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           
-          mkdir -p unobfuscated
-          curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
-          echo "✅ 已下载 worker.zip: $TAG_NAME"
+          # 新建版本目录，避免覆盖原有未混淆文件
+          mkdir -p "unobfuscated/versions/${TIMESTAMP}"
+          curl -sL "$DOWNLOAD_URL" -o "unobfuscated/versions/${TIMESTAMP}/worker.zip"
+          unzip -q "unobfuscated/versions/${TIMESTAMP}/worker.zip" -d "unobfuscated/versions/${TIMESTAMP}/"
+          echo "✅ 资产已保存到 unobfuscated/versions/${TIMESTAMP}"
 
-      - name: 解压 worker.zip 到 unobfuscated 文件夹
+      - name: 混淆最新版本资产（仅处理最新解压文件）
         run: |
-          unzip -q unobfuscated/worker.zip -d unobfuscated/
-          echo "已解压 worker.zip 到 unobfuscated 文件夹，包含 JS 文件"
+          set -euo pipefail
+          LAST_VERSION=$(ls -d unobfuscated/versions/* | sort -r | head -n 1)
+          OBFUSCATED_DIR="obfuscated/${LAST_VERSION##*/}" # 按时间戳创建混淆目录
+          mkdir -p "$OBFUSCATED_DIR"
+          
+          find "$LAST_VERSION" -type f -name "*.js" | while read -r js_file; do
+            FILENAME=$(basename "$js_file")
+            OUTPUT_FILE="$OBFUSCATED_DIR/${FILENAME%.*}_obfuscated.js"
+            
+            javascript-obfuscator "$js_file" "$OUTPUT_FILE" \
+              --compact --variable-name-changer hexadecimal --control-flow-flattening 
+            echo "✅ 混淆: $FILENAME -> ${FILENAME%.*}_obfuscated.js"
+          done
 
-      - name: 提交资产到仓库
+      - name: 提交所有文件（强制保留 unobfuscated 目录）
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "📦 同步 worker.zip 及 JS 文件到仓库 (版本: ${{ steps.download-latest.outputs.TAG_NAME }})"
+          commit_message: "📦 同步资产 & 🔄 混淆代码"
           files: |
             unobfuscated/
-          commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          args: --allow-empty-directory
+            obfuscated/
+          args: --no-verify --allow-empty-directory
