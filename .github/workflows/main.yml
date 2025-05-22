@@ -77,7 +77,7 @@ jobs:
           echo -e "## 📦 资产更新日志\n### $TAG_NAME\n资产文件: ${ASSETS[*]}\n\n$TRANSLATED_NOTES" >> README.md
 
       - name: 混淆指定JS文件（示例：worker.js）
-        if: steps.download-assets.outputs.ASSETS =~ worker\.js$ # 仅当存在worker.js时执行
+        if: steps.download-assets.outputs.ASSETS =~ 'worker\.js$' # 修正正则表达式引用格式
         run: |
           # 假设原始资产包含worker.js，从未混淆目录读取
           if [ -f "未混淆/worker.js" ]; then
@@ -87,3 +87,19 @@ jobs:
             # 示例：使用本地Terser混淆（需安装npm依赖）
             npm install -g terser
             terser 未混淆/worker.js --compress --mangle -o 已混淆/worker.js
+            echo "✅ 混淆完成，已保存到已混淆/worker.js"
+          else
+            echo "未找到未混淆的worker.js文件，跳过混淆步骤"
+          fi
+
+      - name: 提交所有文件
+        if: always()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🔄 同步资产、更新日志并混淆JS文件"
+          files: |
+            未混淆/
+            已混淆/
+            version.txt
+            README.md
+          commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
