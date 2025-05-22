@@ -1,43 +1,37 @@
 name: 工作流混淆 JS 文件（使用 uglify - js）
 on:
   push:
-    branches: [main] 
-  workflow_dispatch: 
-
+    branches: [main]
+  workflow_dispatch:
 permissions:
-  contents: write 
-
+  contents: write
 jobs:
   obfuscate:
-    runs - on: ubuntu - latest
+    runs-on: ubuntu-latest
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          fetch - depth: 1 
-
+          fetch-depth: 1
       - name: 安装混淆工具（uglify - js）
         run: |
-          npm install -g uglify - js
-
+          npm install -g uglify-js
       - name: 下载并解压 worker.zip
         run: |
-          REPO_OWNER="bia - pain - bache" 
-          REPO_NAME="BPB - Worker - Panel" 
+          REPO_OWNER="bia-pain-bache" 
+          REPO_NAME="BPB-Worker-Panel" 
           response=$(curl -s https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           mkdir -p unobfuscated
           curl -sL "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           unzip -q unobfuscated/worker.zip -d unobfuscated/
           echo "✅ 下载并解压完成"
-
       - name: 混淆 JS 文件到根目录“混淆”文件夹（用 uglify - js）
         run: |
           mkdir -p 混淆
-          find unobfuscated - type f - name "*.js" | while read - r js_file; do
+          find unobfuscated -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="混淆/${FILENAME%.*}_obfuscated.js"
-            # 使用 uglify - js 进行混淆，-c 开启压缩，-m 开启变量名混淆
             uglifyjs "$js_file" -o "$OUTPUT_FILE" -c -m
             if [! -f "$OUTPUT_FILE" ]; then
               echo "❌ 混淆文件 $OUTPUT_FILE 未生成，检查工具输出"
@@ -46,13 +40,12 @@ jobs:
               echo "✅ 成功混淆: $FILENAME -> $OUTPUT_FILE"
             fi
           done
-
       - name: 提交结果
         if: always()
-        uses: stefanzweifel/git - auto - commit - action@v5
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔄 工作流混淆 JS 文件"
           files: |
             unobfuscated/
             混淆/
-          args: --allow - empty - directory
+          args: --allow-empty-directory
