@@ -16,11 +16,11 @@ jobs:
       - name: 安装混淆工具（uglify - js）
         run: |
           npm install -g uglify-js
-      - name: 下载并解压 worker.zip（强化服务器端执行）
+      - name: 下载并解压 worker.zip（使用令牌权限）
         run: |
           REPO_OWNER="bia-pain-bache" 
           REPO_NAME="BPB-Worker-Panel" 
-          # 获取下载链接
+          # 使用令牌获取下载链接
           response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           if [[ -z "$response" ]]; then
             echo "❌ 无法获取仓库响应，检查仓库名或 GITHUB_TOKEN 权限"
@@ -31,7 +31,7 @@ jobs:
             echo "❌ 未找到 worker.zip 资产"
             exit 1
           fi
-          # 下载文件
+          # 使用令牌下载文件
           mkdir -p unobfuscated
           curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           if [[ ! -f unobfuscated/worker.zip ]]; then
