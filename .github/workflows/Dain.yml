@@ -3,7 +3,7 @@ on:
   push:
     branches: [main] 
   schedule:
-    - cron: "0 16 * * *" # UTC+8 凌晨 1 点（原配置正确，UTC时间16点对应北京时间0点？需根据实际需求调整）
+    - cron: "0 16 * * *" # UTC 时间，如需调整为北京时间需根据时差换算
   workflow_dispatch: 
     inputs:
       force_update:
@@ -28,16 +28,16 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip 
-          npm install -g javascript-obfuscator # 修正：去除包名中的空格
-
+          npm install -g javascript-obfuscator@latest # 安装最新版 javascript - obfuscator
+          
       - name: 下载最新版本资产（含授权）
         id: download-latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          REPO_OWNER="bia-pain-bache" # 修正：去除仓库名中的空格（需确认实际仓库名是否包含横线）
-          REPO_NAME="BPB-Worker-Panel"
+          REPO_OWNER="bia-pain-bache" # 请确认实际仓库所有者名称是否正确
+          REPO_NAME="BPB-Worker-Panel" # 请确认实际仓库名称是否正确
           
           response=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest)
           
@@ -78,14 +78,8 @@ jobs:
           find "$TEMP_DIR" -type f -name "*.js" | while read -r js_file; do
             FILENAME=$(basename "$js_file")
             OUTPUT_FILE="$OBFUSCATED_DIR/$FILENAME"
-            javascript-obfuscator "$js_file" "$OUTPUT_FILE" \ # 修正：去除命令中的空格
-              --dead-code-injection \
-              --dead-code-injection-threshold 0.4 \
-              --control-flow-flattening \
-              --control-flow-flattening-threshold 0.75 \
-              --identifier-names-generator hexadecimal \
-              --compact \
-              --variable-name-changer select
+            # 简化参数，确保基本混淆功能，避免不兼容参数
+            javascript-obfuscator "$js_file" "$OUTPUT_FILE" --compact --variable-name-changer hexadecimal 
           done
 
       - name: 提交混淆结果到仓库
