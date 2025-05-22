@@ -1,4 +1,4 @@
-name: 资产同步到根目录（含 JS 文件）
+name: 资产同步到指定文件夹（含 JS 文件）
 on:
   push:
     branches: [main] 
@@ -28,7 +28,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y unzip 
 
-      - name: 下载最新版本资产
+      - name: 下载最新版本资产到 unobfuscated 文件夹
         id: download-latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -47,13 +47,14 @@ jobs:
           TAG_NAME=$(echo "$response" | jq -r '.tag_name')
           DOWNLOAD_URL=$(echo "$response" | jq -r '.assets[] | select(.name == "worker.zip") | .browser_download_url')
           
-          curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o worker.zip
+          mkdir -p unobfuscated
+          curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" -o unobfuscated/worker.zip
           echo "✅ 已下载 worker.zip: $TAG_NAME"
 
-      - name: 解压 worker.zip 到根目录
+      - name: 解压 worker.zip 到 unobfuscated 文件夹
         run: |
-          unzip -q worker.zip
-          echo "已解压 worker.zip 到当前目录，包含 JS 文件"
+          unzip -q unobfuscated/worker.zip -d unobfuscated/
+          echo "已解压 worker.zip 到 unobfuscated 文件夹，包含 JS 文件"
 
       - name: 提交资产到仓库
         if: always()
@@ -61,7 +62,6 @@ jobs:
         with:
           commit_message: "📦 同步 worker.zip 及 JS 文件到仓库 (版本: ${{ steps.download-latest.outputs.TAG_NAME }})"
           files: |
-            worker.zip
-            *.js # 提交所有 JS 文件
+            unobfuscated/
           commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
           args: --allow-empty-directory
